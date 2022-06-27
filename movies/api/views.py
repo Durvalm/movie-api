@@ -1,17 +1,30 @@
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.response import Response
-from rest_framework import status, generics, mixins, viewsets
+from rest_framework import status, generics, mixins, viewsets, filters
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle, ScopedRateThrottle
 from movies.models import Movie, Platform, Review
 from movies.api.serializers import MovieSerializer, PlatformSerializer, ReviewSerializer
 
 from .permissions import IsAdminOrReadOnly, IsReviewUserOrReadOnly
+from .throttling import ReviewListThrottle, ReviewCreateThrottle
+from .pagination import MoviePagination
+
+
+class UserReview(generics.ListAPIView):
+    serializer_class = ReviewSerializer
+
+    def get_queryset(self):
+        username = self.request.query_params.get('username', None)
+        return Review.objects.filter(user__username=username)
 
 
 class ReviewCreate(generics.CreateAPIView):
     serializer_class = ReviewSerializer
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ReviewCreateThrottle]
 
     def get_queryset(self):
         return Review.objects.all()
@@ -41,6 +54,9 @@ class ReviewCreate(generics.CreateAPIView):
 class ReviewList(generics.ListAPIView):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
+    throttle_classes = [ReviewListThrottle, AnonRateThrottle]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['user__username', 'is_active']
     # permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -52,6 +68,7 @@ class ReviewDetail(generics.RetrieveUpdateDestroyAPIView):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
     permission_classes = [IsReviewUserOrReadOnly]
+    # throttle_scope = 'review-detail'
 
 
 class PlatformList(APIView):
@@ -96,20 +113,25 @@ class PlatformDetail(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class MovieList(APIView):
-
+class MovieList(generics.ListAPIView):
+    queryset = Movie.objects.all()
+    serializer_class = MovieSerializer
     permission_classes = [IsAdminOrReadOnly]
+    throttle_classes = [AnonRateThrottle]
+    pagination_class = MoviePagination
 
-    def get(self, request):
-        movie = Movie.objects.all()
-        serializer = MovieSerializer(movie, many=True)
-        return Response(serializer.data)
+    # def get(self, request):
+    #     movies = Movie.objects.all()
+    #     serializer = MovieSerializer(movies, many=True)
+    #     return Response(serializer.data)
 
     def post(self, request):
         serializer = MovieSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
+        else:
+            return Response(serializer.errors)
 
 
 class MovieDetail(APIView):
